@@ -1,90 +1,61 @@
-// chrome.storage.local.get(['description'], function (result) {
-//   console.log('Value currently is ' + result.description);
-// });
+chrome.runtime.onMessage.addListener((message: any) => {
+    const { tabName, action } = message;
 
-interface Message {
-  role: string;
-  content: string;
-}
+    // Helper function to extract hostName from tab URL
+    const extractHostName = (url: string): string => {
+        const urlObj = new URL(url);
+        const siteUrl = urlObj.hostname.split('.');
+        if (siteUrl[0] === "www") siteUrl.shift();
+        siteUrl.pop();
+        return siteUrl.join('.');
+    };
 
-interface ApiResponse {
-  choices: Array<{ message: { content: string } }>;
-}
+    // Fetch saved URLs once and reuse them
+    chrome.storage.local.get(['urls'], (result) => {
+        const savedUrls: string[] = result.urls || [];
+        chrome.tabs.query({}, (tabs: chrome.tabs.Tab[]) => {
+            tabs.forEach(tab => {
+                if (!tab.url) return; // Skip if no URL
 
-async function fetchFromApi(description: string): Promise<ApiResponse> {
-  const apiKey = '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';
-  const apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
+                function messageSend(tabId: number, action: any, title?: any) {
+                    const message: { action: any; title?: any } = { action };  // Define message with optional 'title'
 
-  const messages: Message[] = [
-    {
-      role: 'system',
-      content:
-        'You will Generate Job Propsal Of A Given Text. You can only Generate a job Propsal.Nothing  to Add any line that is not related to Job Propsal.',
-    },
-    { role: 'user', content: description },
-  ];
+                    if (title !== undefined) {
+                        message.title = title;  // Safely add title if it's provided
+                    }
+                    chrome.tabs.sendMessage(tabId, { message })
+                }
 
-  if (!apiUrl) {
-    throw new Error('API URL is not defined.');
-  }
+                const hostName = extractHostName(tab.url);
 
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      messages,
-      model: 'mixtral-8x7b-32768',
-      temperature: 1,
-      max_tokens: 1024,
-    }),
-  });
+                switch (action) {
+                    case "apply Privacy to all":
+                        messageSend(tab.id!, 'updateTitle', tabName)
+                        break;
+                    case "apply Privacy to selective":
+                        if (savedUrls.some(url => url.includes(hostName))) {
+                            messageSend(tab.id!, 'updateTitle', tabName)
+                        }
+                        break;
+                    case "apply Privacy to all sites":
+                        messageSend(tab.id!, 'blurSite')
+                        break;
+                    case "apply Privacy to selective sites":
+                        if (savedUrls.some(url => url.includes(hostName))) {
+                            messageSend(tab.id!, 'blurSite')
+                        }
+                        break;
+                    case "removePrivacy":
+                        messageSend(tab.id!, 'removePrivacy')
+                        break;
+                    default:
+                        break;
+                }
 
-  if (!response.ok) {
-    throw new Error(`Error: ${response.status} - ${response.statusText}`);
-  }
 
-  return response.json();
-}
 
-async function dataFromApi(description: string): Promise<string> {
-  try {
-    const data = await fetchFromApi(description);
-    let response =
-      data.choices[0]?.message?.content || 'No response from Groq AI.';
-    response = response.replace('Job Proposal:', '');
-    return response;
-  } catch (error) {
-    console.error('Fetch error:', error);
-    throw new Error('An error occurred while fetching the data.');
-  }
-}
 
-let isRequestPending = false;
-
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.description) {
-    if (isRequestPending) {
-      sendResponse('Response is already generating...');
-      return;
-    }
-
-    isRequestPending = true;
-
-    dataFromApi(request.description)
-      .then((jobpropsal) => {
-        console.log(jobpropsal);
-        sendResponse(jobpropsal);
-        isRequestPending = false;
-      })
-      .catch((error) => {
-        console.error(error);
-        sendResponse('An error occurred.');
-        isRequestPending = false;
-      });
-
-    return true;
-  }
+            });
+        });
+    });
 });
